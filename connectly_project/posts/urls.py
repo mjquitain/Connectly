@@ -1,14 +1,13 @@
 from django.urls import path
 from . import views
-from .views import AdminOnlyView, PostDetailView, ProtectedView, UserListCreate, PostListCreate, CommentListCreate, UserListView, UserLoginView, UserLogoutView, UserRegistrationView
+from .views import AdminOnlyView, CreatePostView, PostDetailView, ProtectedView, UserListCreate, PostListCreate, CommentListCreate, UserListCreateView, UserListView, UserLoginView, UserLogoutView, UserRegistrationView
 
 urlpatterns = [
     # path('users/', views.get_users, name='get_users'),
     # path('users/create/', views.create_user, name='create_user'),
     # path('posts/', views.get_posts, name='get_posts'),
     # path('posts/create/', views.create_post, name='create_post'),
-    path('users/', UserListCreate.as_view(), name='user-list-create'),
-    path('users/list/', UserListView.as_view(), name='user-list'),
+    path('users/', UserListCreateView.as_view(), name='user-list-create'),
     path('register/', UserRegistrationView.as_view(), name='user-register'),
     path('login/', UserLoginView.as_view(), name='user-login'),
     path('logout/', UserLogoutView.as_view(), name='user-logout'),

@@ -26,11 +26,11 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             )
         
 class PostSerializer(serializers.ModelSerializer):
-    comments = serializers.StringRelatedField(many=True, read_only=True)
     
     class Meta:
         model = Post
-        fields = ['id', 'content', 'author', 'created_at', 'comments']
+        fields = ['id', 'title', 'content', 'author', 'post_type', 'metadata', 'created_at']
+        read_only_fileds = ['author', 'comments']
         
 class CommentSerializer(serializers.ModelSerializer):
     class Meta:
