@@ -1,6 +1,8 @@
 from django.urls import path
 from . import views
-from .views import AdminOnlyView, CreatePostView, PostDetailView, ProtectedView, UserListCreate, PostListCreate, CommentListCreate, UserListCreateView, UserListView, UserLoginView, UserLogoutView, UserRegistrationView
+from .views import AdminOnlyView, PostDetailView, ProtectedView, PostListCreate, CommentListCreate, UserListCreateView, UserLoginView, UserLogoutView, UserRegistrationView
+
+# CreatePostView, UserListCreate, UserListView
 
 urlpatterns = [
     # path('users/', views.get_users, name='get_users'),
