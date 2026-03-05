@@ -7,7 +7,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from singletons.logger_singleton import LoggerSingleton
-from .models import Post, Comment
+from .models import Post, Comment, Like
 from .serializers import (
     UserSerializer, 
     UserRegistrationSerializer,
@@ -269,3 +269,77 @@ class AdminOnlyView(APIView):
             'message': 'Welcome, Admin!',
             'stats': {'users': User.objects.count(), 'posts': Post.objects.count(), 'comments': Comment.objects.count()}
         })
+        
+
+#  Like & Comment API Views
+# -------------------------------------------------
+
+class LikePostView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            post = Post.objects.get(pk=pk)
+        except Post.DoesNotExist:
+            return Response({'error': 'Post not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        like, created = Like.objects.get_or_create(
+            user=request.user,
+            post=post
+        )
+
+        if not created:
+            return Response(
+                {'error': 'You already liked this post'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return Response(
+            {'message': 'Post liked successfully'},
+            status=status.HTTP_201_CREATED
+        )
+
+
+class PostCommentView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            post = Post.objects.get(pk=pk)
+        except Post.DoesNotExist:
+            return Response({'error': 'Post not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        text = request.data.get('text')
+
+        if not text:
+            return Response(
+                {'error': 'Comment text cannot be empty'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        comment = Comment.objects.create(
+            author=request.user,
+            post=post,
+            text=text
+        )
+
+        serializer = CommentSerializer(comment)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class PostCommentsListView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            post = Post.objects.get(pk=pk)
+        except Post.DoesNotExist:
+            return Response({'error': 'Post not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        comments = Comment.objects.filter(post=post)
+        serializer = CommentSerializer(comments, many=True)
+
+        return Response(serializer.data)
