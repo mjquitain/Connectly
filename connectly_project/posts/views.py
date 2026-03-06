@@ -7,7 +7,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from singletons.logger_singleton import LoggerSingleton
-from .models import Post, Comment
+from .models import Post, Comment, Like
 from .serializers import (
     UserSerializer, 
     UserRegistrationSerializer,
@@ -59,30 +59,24 @@ logger.info("API views initialized successfully.")
 
 class UserRegistrationView(APIView):
     permission_classes = [AllowAny]
-    
+
     def post(self, request):
-        try:
-            serializer = UserRegistrationSerializer(data=request.data)
-            if serializer.is_valid():
-                user = User.objects.create_user(
-                    username=serializer.validated_data['username'],
-                    email=serializer.validated_data['email'],
-                    password=serializer.validated_data['password']
-                )
-                token, created = Token.objects.get_or_create(user=user)
-            
-                logger.info(f"New user registered: {user.username} (ID: {user.id})")
-                return Response({
-                    'user': UserSerializer(user).data,
-                    'token': token.key,
-                    'message': 'User registered successfully with hashed password'
-                }, status=status.HTTP_201_CREATED)
-            
-            logger.warning(f"BAD REQUEST: Registration validation failed: {serializer.errors}")
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        except Exception:   
-            logger.exception("CRITICAL: Unexpected error during user registration")
-            return Response({'error': 'Internal server error'}, status=500)
+        serializer = UserRegistrationSerializer(data=request.data)
+
+        if serializer.is_valid():
+            user = serializer.save()
+            token, created = Token.objects.get_or_create(user=user)
+
+            return Response({
+                "user": UserSerializer(user).data,
+                "token": token.key,
+                "message": "User registered successfully"
+            }, status=201)
+
+        return Response(serializer.errors, status=400)
+    
+    
+    
     
 class UserLoginView(APIView):
     permission_classes = [AllowAny]
@@ -269,3 +263,71 @@ class AdminOnlyView(APIView):
             'message': 'Welcome, Admin!',
             'stats': {'users': User.objects.count(), 'posts': Post.objects.count(), 'comments': Comment.objects.count()}
         })
+        
+
+class LikePostView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            post = Post.objects.get(pk=pk)
+        except Post.DoesNotExist:
+            return Response({"error": "Post not found"}, status=404)
+
+        like, created = Like.objects.get_or_create(
+            user=request.user,
+            post=post
+        )
+
+        if not created:
+            return Response({"error": "Already liked"}, status=400)
+
+        return Response({"message": "Post liked"}, status=201)
+    
+class PostCommentView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            post = Post.objects.get(pk=pk)
+        except Post.DoesNotExist:
+            return Response({"error": "Post not found"}, status=404)
+
+        text = request.data.get("text")
+
+        if not text:
+            return Response({"error": "Comment cannot be empty"}, status=400)
+
+        comment = Comment.objects.create(
+            author=request.user,
+            post=post,
+            text=text
+        )
+
+        return Response({"message": "Comment added"}, status=201)
+    
+class PostCommentsListView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            post = Post.objects.get(pk=pk)
+        except Post.DoesNotExist:
+            return Response({"error": "Post not found"}, status=404)
+
+        comments = Comment.objects.filter(post=post)
+
+        data = [
+            {
+                "id": c.id,
+                "author": c.author.username,
+                "text": c.text,
+                "created_at": c.created_at
+            }
+            for c in comments
+        ]
+
+        return Response(data)                
