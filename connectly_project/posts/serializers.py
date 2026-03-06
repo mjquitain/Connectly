@@ -33,22 +33,41 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         return user
         
 class PostSerializer(serializers.ModelSerializer):
-    
+    like_count = serializers.SerializerMethodField()
+    comment_count = serializers.SerializerMethodField()
+
     class Meta:
         model = Post
-        fields = ['id', 'title', 'content', 'author', 'post_type', 'metadata', 'created_at']
-        read_only_fileds = ['author', 'comments']
-        
+        fields = [
+            'id',
+            'title',
+            'content',
+            'author',
+            'post_type',
+            'metadata',
+            'created_at',
+            'like_count',
+            'comment_count'
+        ]
+        read_only_fields = ['author']
+
+    def get_like_count(self, obj):
+        return obj.likes.count()
+
+    def get_comment_count(self, obj):
+        return obj.comments.count()
+
+
 class CommentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Comment
         fields = ['id', 'text', 'author', 'post', 'created_at']
-        
+
     def validate_post(self, value):
         if not isinstance(value, Post):
             raise serializers.ValidationError("Post does not exist")
         return value
-    
+
     def validate_author(self, value):
         if not isinstance(value, User):
             raise serializers.ValidationError("Author does not exist")
