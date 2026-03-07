@@ -1,6 +1,6 @@
 from django.urls import path
 from . import views
-from .views import  AdminOnlyView, PostDetailView, ProtectedView, PostListCreate,  CommentListCreate, UserListCreateView, UserLoginView, UserLogoutView, UserRegistrationView, LikePostView, PostCommentView, PostCommentsListView
+from .views import  AdminOnlyView, PostDetailView, ProtectedView, PostListCreate,  CommentListCreate, UserListCreateView, UserLoginView, UserLogoutView, UserRegistrationView, LikePostView, PostCommentView, PostCommentsListView, NewsFeedView
 
   # path('users/', views.get_users, name='get_users'),
     # path('users/create/', views.create_user, name='create_user'),
@@ -19,4 +19,5 @@ urlpatterns = [
     path('posts/<int:pk>/like/', LikePostView.as_view()),
     path('posts/<int:pk>/comment/', PostCommentView.as_view()),
     path('posts/<int:pk>/comments/', PostCommentsListView.as_view()),
+    path('feed/', NewsFeedView.as_view(), name='news-feed'),
 ]

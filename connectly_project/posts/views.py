@@ -7,7 +7,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from singletons.logger_singleton import LoggerSingleton
-from .models import Post, Comment, Like
+from .models import ConnectlyUser, Post, Comment, Like
 from .serializers import (
     UserSerializer, 
     UserRegistrationSerializer,
@@ -16,6 +16,7 @@ from .serializers import (
 )
 from .permissions import IsPostAuthor, IsCommentAuthor, IsAdminOrReadOnly
 from factories.post_factory import PostFactory
+from django.core.paginator import Paginator, EmptyPage
 
 # def get_users(request):
 #     try:
@@ -65,6 +66,7 @@ class UserRegistrationView(APIView):
 
         if serializer.is_valid():
             user = serializer.save()
+            ConnectlyUser.objects.get_or_create(username=user.username, email=user.email)
             token, created = Token.objects.get_or_create(user=user)
 
             return Response({
@@ -74,8 +76,6 @@ class UserRegistrationView(APIView):
             }, status=201)
 
         return Response(serializer.errors, status=400)
-    
-    
     
     
 class UserLoginView(APIView):
@@ -157,8 +157,9 @@ class PostListCreate(APIView):
     def post(self, request):
         data = request.data
         try:
+            connectly_user = ConnectlyUser.objects.get(username=request.user.username)
             post = PostFactory.create_post(
-                author=request.user,
+                author=connectly_user,
                 post_type=data['post_type'],
                 title=data['title'],
                 content=data.get('content', ''),
@@ -330,4 +331,28 @@ class PostCommentsListView(APIView):
             for c in comments
         ]
 
-        return Response(data)                
+        return Response(data)
+    
+class NewsFeedView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        posts_list = Post.objects.all().select_related('author').order_by('-created_at')
+        page_number = request.query_params.get('page', 1)
+        page_size = request.query_params.get('page_size', 10)
+        paginator = Paginator(posts_list, page_size)
+        
+        try:
+            page_obj = paginator.page(page_number)
+        except (EmptyPage, ValueError):
+            return Response({"error": "Invalid page number"}, status=400)
+        
+        serializer = PostSerializer(page_obj.object_list, many=True)
+        
+        return Response({
+            "count": paginator.count,
+            "total_pages": paginator.num_pages,
+            "current_page": int(page_number),
+            "results": serializer.data
+        }, status=status.HTTP_200_OK)
