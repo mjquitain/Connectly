@@ -86,4 +86,4 @@ def verify_google_token(id_token: str) -> dict:
     # if payload.get('aud') != settings.GOOGLE_CLIENT_ID:
     #     raise GoogleAuthError("Token was not issued for this application.")
 
-    return payload
+    return payload  
