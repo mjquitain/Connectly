@@ -7,8 +7,9 @@ from rest_framework.authtoken.models import Token
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from singletons.logger_singleton import LoggerSingleton
-from .models import ConnectlyUser, Post, Comment, Like
+from .models import ConnectlyUser, Post, Comment, Like, GoogleSocialAccount
 from .serializers import (
+    GoogleLoginSerializer,
     UserSerializer, 
     UserRegistrationSerializer,
     PostSerializer, 
@@ -17,6 +18,7 @@ from .serializers import (
 from .permissions import IsPostAuthor, IsCommentAuthor, IsAdminOrReadOnly
 from factories.post_factory import PostFactory
 from django.core.paginator import Paginator, EmptyPage
+from .google_auth import verify_google_token, GoogleAuthError
 
 # def get_users(request):
 #     try:
@@ -119,15 +121,105 @@ class UserLogoutView(APIView):
             status=status.HTTP_200_OK
         )
         
-        
-class UserListView(APIView):
-    authentication_classes = [TokenAuthentication]
-    permission_classes = [IsAuthenticated]
-    
-    def get(self, request):
-        users = User.objects.all()
-        serializer = UserSerializer(users, many=True)
-        return Response(serializer.data)
+class GoogleLoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = GoogleLoginSerializer(data=request.data)
+        if not serializer.is_valid():
+            first_error = next(iter(serializer.errors.values()))[0]
+            return Response({'error': str(first_error)}, status=status.HTTP_400_BAD_REQUEST)
+
+        id_token_str = serializer.validated_data['id_token']
+
+        try:
+            payload = verify_google_token(id_token_str)
+        except GoogleAuthError as e:
+            logger.warning(f"Google token verification failed: {e}")
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        google_id   = payload['sub']
+        email       = payload['email']
+        name        = payload.get('name', '')
+        picture_url = payload.get('picture', '')
+
+        try:
+            social_account = GoogleSocialAccount.objects.get(google_id=google_id)
+            social_account.email = email
+            social_account.name = name
+            social_account.picture_url = picture_url
+            social_account.save()
+
+            user = social_account.user
+            token, _ = Token.objects.get_or_create(user=user)
+            logger.info(f"Google login (returning): {user.username} (google_id={google_id})")
+            return Response({
+                'token': token.key,
+                'user': UserSerializer(user).data,
+                'created': False,
+                'message': 'Logged in with Google successfully.'
+            }, status=status.HTTP_200_OK)
+
+        except GoogleSocialAccount.DoesNotExist:
+            pass
+
+        existing_user = User.objects.filter(email=email).first()
+        if existing_user:
+            GoogleSocialAccount.objects.create(
+                user=existing_user,
+                google_id=google_id,
+                email=email,
+                name=name,
+                picture_url=picture_url,
+            )
+            token, _ = Token.objects.get_or_create(user=existing_user)
+            logger.info(
+                f"Google login (linked to existing): {existing_user.username} "
+                f"(google_id={google_id})"
+            )
+            return Response({
+                'token': token.key,
+                'user': UserSerializer(existing_user).data,
+                'created': False,
+                'message': 'Google account linked to your existing Connectly account.'
+            }, status=status.HTTP_200_OK)
+            
+        base_username = email.split('@')[0]
+        username = base_username
+        counter = 1
+        while User.objects.filter(username=username).exists():
+            username = f"{base_username}{counter}"
+            counter += 1
+
+        new_user = User.objects.create_user(
+            username=username,
+            email=email,
+            password=None,
+        )
+        if name:
+            parts = name.split(' ', 1)
+            new_user.first_name = parts[0]
+            new_user.last_name = parts[1] if len(parts) > 1 else ''
+            new_user.save()
+
+        GoogleSocialAccount.objects.create(
+            user=new_user,
+            google_id=google_id,
+            email=email,
+            name=name,
+            picture_url=picture_url,
+        )
+        token, _ = Token.objects.get_or_create(user=new_user)
+        logger.info(
+            f"Google login (new user created): {new_user.username} "
+            f"(google_id={google_id})"
+        )
+        return Response({
+            'token': token.key,
+            'user': UserSerializer(new_user).data,
+            'created': True,
+            'message': 'New Connectly account created via Google login.'
+        }, status=status.HTTP_201_CREATED)
         
 class UserListCreateView(APIView):
     authentication_classes = [TokenAuthentication]

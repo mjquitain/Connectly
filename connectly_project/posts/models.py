@@ -46,3 +46,22 @@ class Comment(models.Model):
     def __str__(self):
         return f"Comment by {self.author.username} on Post {self.post.id}"
     
+class GoogleSocialAccount(models.Model):
+    user = models.OneToOneField(
+        ConnectlyUser,
+        on_delete=models.CASCADE,
+        related_name='google_account'
+    )
+    google_id = models.CharField(max_length=255, unique=True)
+    email = models.EmailField()
+    name = models.CharField(max_length=255, blank=True)
+    picture_url = models.URLField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_login = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Google Social Account'
+        verbose_name_plural = 'Google Social Accounts'
+
+    def __str__(self):
+        return f"GoogleAccount({self.user.username} <-> {self.google_id})"

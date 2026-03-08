@@ -72,3 +72,26 @@ class CommentSerializer(serializers.ModelSerializer):
         if not isinstance(value, User):
             raise serializers.ValidationError("Author does not exist")
         return value
+    
+class GoogleSocialAccountSerializer(serializers.ModelSerializer):
+    username = serializers.ReadOnlyField(source='user.username')
+
+    class Meta:
+        from .models import GoogleSocialAccount
+        model = GoogleSocialAccount
+        fields = ['id', 'username', 'google_id', 'email', 'name', 'picture_url', 'created_at', 'last_login']
+        read_only_fields = fields
+    
+class GoogleLoginSerializer(serializers.Serializer):
+    id_token = serializers.CharField(
+        required=True,
+        allow_blank=True,
+        error_messages={
+            'required': 'id_token is required.',
+        }
+    )
+
+    def validate_id_token(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError('id_token must not be blank.')
+        return value

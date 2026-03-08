@@ -1,4 +1,6 @@
 from django.urls import path
+
+from posts.views import GoogleLoginView
 from . import views
 from .views import  AdminOnlyView, PostDetailView, ProtectedView, PostListCreate,  CommentListCreate, UserListCreateView, UserLoginView, UserLogoutView, UserRegistrationView, LikePostView, PostCommentView, PostCommentsListView, NewsFeedView
 
@@ -20,4 +22,5 @@ urlpatterns = [
     path('posts/<int:pk>/comment/', PostCommentView.as_view()),
     path('posts/<int:pk>/comments/', PostCommentsListView.as_view()),
     path('feed/', NewsFeedView.as_view(), name='news-feed'),
+    path('auth/google/login/', GoogleLoginView.as_view(), name='google-login'),
 ]
