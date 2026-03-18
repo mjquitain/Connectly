@@ -1,5 +1,7 @@
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User, Group
+from django.core.cache import cache
+from django.db.models import Q, Count
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -15,7 +17,7 @@ from .serializers import (
     PostSerializer, 
     CommentSerializer
 )
-from .permissions import IsPostAuthor, IsCommentAuthor, IsAdminOrReadOnly
+from .permissions import IsAdminRole, get_connectly_user_from_request
 from factories.post_factory import PostFactory
 from django.core.paginator import Paginator, EmptyPage
 from .google_auth import verify_google_token, GoogleAuthError
@@ -59,6 +61,40 @@ from .google_auth import verify_google_token, GoogleAuthError
 
 logger = LoggerSingleton().get_logger()
 logger.info("API views initialized successfully.")
+
+DEFAULT_FEED_PAGE_SIZE = 10
+MAX_FEED_PAGE_SIZE = 50
+FEED_CACHE_TIMEOUT_SECONDS = 60
+FEED_CACHE_VERSION_KEY = 'feed_cache_version'
+
+
+def get_feed_cache_version():
+    return cache.get_or_set(FEED_CACHE_VERSION_KEY, 1)
+
+
+def bump_feed_cache_version():
+    try:
+        cache.incr(FEED_CACHE_VERSION_KEY)
+    except ValueError:
+        cache.set(FEED_CACHE_VERSION_KEY, 2)
+
+
+def parse_positive_int(value, default):
+    try:
+        parsed = int(value)
+        return parsed if parsed > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def is_post_visible_to_user(post, connectly_user):
+    if post.privacy == 'public':
+        return True
+
+    if connectly_user is None:
+        return False
+
+    return post.author_id == connectly_user.id
 
 class UserRegistrationView(APIView):
     permission_classes = [AllowAny]
@@ -255,8 +291,10 @@ class PostListCreate(APIView):
                 post_type=data['post_type'],
                 title=data['title'],
                 content=data.get('content', ''),
+                privacy=data.get('privacy', 'public'),
                 metadata=data.get('metadata', {})
             )
+            bump_feed_cache_version()
             return Response ({'message': 'Post created successfully!', 'post_id': post.id}, status=status.HTTP_201_CREATED)
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -279,13 +317,11 @@ class CommentListCreate(APIView):
     
 class PostDetailView(APIView):
     authentication_classes = [TokenAuthentication]
-    permission_classes = [IsAuthenticated, IsPostAuthor]
+    permission_classes = [IsAuthenticated]
     
     def get_object(self, pk):
         try:
-            post = Post.objects.get(pk=pk)
-            self.check_object_permissions(self.request, post)
-            return post
+            return Post.objects.get(pk=pk)
         except Post.DoesNotExist:
             return None
     
@@ -296,6 +332,14 @@ class PostDetailView(APIView):
                 {'error': 'Post not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+        connectly_user = get_connectly_user_from_request(request)
+        if not is_post_visible_to_user(post, connectly_user):
+            return Response(
+                {'error': 'You do not have permission to view this private post'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         serializer = PostSerializer(post)
         return Response(serializer.data)
     
@@ -307,10 +351,18 @@ class PostDetailView(APIView):
                 {'error': 'Post not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+        connectly_user = get_connectly_user_from_request(request)
+        if connectly_user is None or post.author_id != connectly_user.id:
+            return Response(
+                {'error': 'Only the post owner can update this post'},
+                status=status.HTTP_403_FORBIDDEN
+            )
         
         serializer = PostSerializer(post, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
+            bump_feed_cache_version()
             logger.info(f"Post {pk} updated by {request.user.username}")
             return Response(serializer.data)
         
@@ -318,11 +370,17 @@ class PostDetailView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     def delete(self, request, pk):
+        if not IsAdminRole().has_permission(request, self):
+            return Response(
+                {'error': 'Admin role required to delete posts'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         post = self.get_object(pk)
         if post:
             post_id = post.id
-            author = post.author.username
             post.delete()
+            bump_feed_cache_version()
             logger.info(f"Post {post_id} deleted by user {request.user.username}")
             return Response({'message': 'Post deleted'}, status=status.HTTP_204_NO_CONTENT)
         
@@ -341,16 +399,9 @@ class ProtectedView(APIView):
         
 class AdminOnlyView(APIView):
     authentication_classes = [TokenAuthentication]
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdminRole]
     
     def get(self, request):
-        if not request.user.is_staff:
-            logger.warning(f"Unauthorized Admin access attempt by user: {request.user.username}")
-            return Response(
-                {'error': 'Admin access required'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
         logger.info(f"Admin dashboard accessed by: {request.user.username}")
         return Response({
             'message': 'Welcome, Admin!',
@@ -368,14 +419,19 @@ class LikePostView(APIView):
         except Post.DoesNotExist:
             return Response({"error": "Post not found"}, status=404)
 
+        connectly_user = get_connectly_user_from_request(request)
+        if connectly_user is None:
+            return Response({"error": "Connectly user profile not found"}, status=404)
+
         like, created = Like.objects.get_or_create(
-            user=request.user,
+            user=connectly_user,
             post=post
         )
 
         if not created:
             return Response({"error": "Already liked"}, status=400)
 
+        bump_feed_cache_version()
         return Response({"message": "Post liked"}, status=201)
     
 class PostCommentView(APIView):
@@ -388,18 +444,65 @@ class PostCommentView(APIView):
         except Post.DoesNotExist:
             return Response({"error": "Post not found"}, status=404)
 
+        connectly_user = get_connectly_user_from_request(request)
+        if connectly_user is None:
+            return Response({"error": "Connectly user profile not found"}, status=404)
+
         text = request.data.get("text")
 
         if not text:
             return Response({"error": "Comment cannot be empty"}, status=400)
 
         comment = Comment.objects.create(
-            author=request.user,
+            author=connectly_user,
             post=post,
             text=text
         )
+        bump_feed_cache_version()
 
-        return Response({"message": "Comment added"}, status=201)
+        return Response(
+            {
+                "message": "Comment added",
+                "comment": {
+                    "id": comment.id,
+                    "post_id": post.id,
+                    "author": comment.author.username,
+                    "text": comment.text,
+                    "created_at": comment.created_at,
+                },
+            },
+            status=201,
+        )
+
+
+class CommentDetailView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminRole]
+
+    def delete(self, request, pk):
+        try:
+            comment = Comment.objects.get(pk=pk)
+        except Comment.DoesNotExist:
+            return Response({"error": "Comment not found"}, status=404)
+
+        comment.delete()
+        bump_feed_cache_version()
+        return Response({"message": "Comment deleted"}, status=status.HTTP_204_NO_CONTENT)
+
+
+class PostCommentDetailView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminRole]
+
+    def delete(self, request, post_pk, comment_pk):
+        try:
+            comment = Comment.objects.get(pk=comment_pk, post_id=post_pk)
+        except Comment.DoesNotExist:
+            return Response({"error": "Comment not found for this post"}, status=404)
+
+        comment.delete()
+        bump_feed_cache_version()
+        return Response({"message": "Comment deleted"}, status=status.HTTP_204_NO_CONTENT)
     
 class PostCommentsListView(APIView):
     authentication_classes = [TokenAuthentication]
@@ -430,9 +533,28 @@ class NewsFeedView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        posts_list = Post.objects.all().select_related('author').order_by('-created_at')
-        page_number = request.query_params.get('page', 1)
-        page_size = request.query_params.get('page_size', 10)
+        connectly_user = get_connectly_user_from_request(request)
+        page_number = parse_positive_int(request.query_params.get('page', 1), 1)
+        requested_page_size = parse_positive_int(
+            request.query_params.get('page_size', DEFAULT_FEED_PAGE_SIZE),
+            DEFAULT_FEED_PAGE_SIZE,
+        )
+        page_size = min(requested_page_size, MAX_FEED_PAGE_SIZE)
+        cache_version = get_feed_cache_version()
+        user_key = connectly_user.id if connectly_user else 'anonymous'
+        feed_cache_key = f'feed:{cache_version}:user:{user_key}:page:{page_number}:size:{page_size}'
+
+        cached_payload = cache.get(feed_cache_key)
+        if cached_payload is not None:
+            return Response(cached_payload, status=status.HTTP_200_OK)
+
+        user_filter = Q(author=connectly_user) if connectly_user else Q(pk__in=[])
+        posts_list = Post.objects.filter(
+            Q(privacy='public') | user_filter
+        ).select_related('author').annotate(
+            like_count_annotated=Count('likes', distinct=True),
+            comment_count_annotated=Count('comments', distinct=True),
+        ).order_by('-created_at')
         paginator = Paginator(posts_list, page_size)
         
         try:
@@ -441,10 +563,13 @@ class NewsFeedView(APIView):
             return Response({"error": "Invalid page number"}, status=400)
         
         serializer = PostSerializer(page_obj.object_list, many=True)
-        
-        return Response({
+
+        payload = {
             "count": paginator.count,
             "total_pages": paginator.num_pages,
-            "current_page": int(page_number),
+            "current_page": page_number,
             "results": serializer.data
-        }, status=status.HTTP_200_OK)
+        }
+        cache.set(feed_cache_key, payload, FEED_CACHE_TIMEOUT_SECONDS)
+
+        return Response(payload, status=status.HTTP_200_OK)

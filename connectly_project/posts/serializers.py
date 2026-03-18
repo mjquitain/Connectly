@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Post, Comment
+from .models import Post, Comment, ConnectlyUser
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -44,6 +44,7 @@ class PostSerializer(serializers.ModelSerializer):
             'content',
             'author',
             'post_type',
+            'privacy',
             'metadata',
             'created_at',
             'like_count',
@@ -52,9 +53,13 @@ class PostSerializer(serializers.ModelSerializer):
         read_only_fields = ['author']
 
     def get_like_count(self, obj):
+        if hasattr(obj, 'like_count_annotated'):
+            return obj.like_count_annotated
         return obj.likes.count()
 
     def get_comment_count(self, obj):
+        if hasattr(obj, 'comment_count_annotated'):
+            return obj.comment_count_annotated
         return obj.comments.count()
 
 
@@ -69,7 +74,7 @@ class CommentSerializer(serializers.ModelSerializer):
         return value
 
     def validate_author(self, value):
-        if not isinstance(value, User):
+        if not isinstance(value, ConnectlyUser):
             raise serializers.ValidationError("Author does not exist")
         return value
     

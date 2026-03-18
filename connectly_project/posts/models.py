@@ -2,8 +2,15 @@ from django.db import models
 
 # Create your models here.
 class ConnectlyUser(models.Model):
+    ROLE_CHOICES = [
+        ('admin', 'Admin'),
+        ('user', 'User'),
+        ('guest', 'Guest'),
+    ]
+
     username = models.CharField(max_length=100, unique=True)
     email = models.EmailField(unique=True)
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='user')
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -15,8 +22,14 @@ class Post(models.Model):
         ('image', 'Image'),
         ('video', 'Video'),
     ]
+    PRIVACY_CHOICES = [
+        ('public', 'Public'),
+        ('private', 'Private'),
+    ]
+
     title = models.CharField(max_length=255, default="Untitled")
     post_type = models.CharField(max_length=10, choices=POST_TYPES, default='text')
+    privacy = models.CharField(max_length=10, choices=PRIVACY_CHOICES, default='public')
     metadata = models.JSONField(default=dict, blank=True)
     content = models.TextField()
     author = models.ForeignKey(ConnectlyUser, on_delete=models.CASCADE, related_name='posts')
